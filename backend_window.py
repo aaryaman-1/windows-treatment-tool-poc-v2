@@ -36,7 +36,7 @@ def get_index_from_window_element(element: str) -> int:
     val = int(clean_el[2:])
     prefixes = ["W4", "R7", "R0", "R8", "V7", "V8", "V0", "V9"]
     if prefix not in prefixes:
-        return -999 # Safe fallback
+        return -999 
     pos = prefixes.index(prefix)
     block = val - 10 if pos < 4 else val - 9
     return block * 8 + pos
@@ -47,7 +47,6 @@ def get_window_elements(quarter_str: str) -> tuple[str, str]:
     prefix = prefixes[idx % 8]
     base_value = 10 + (idx // 8) if (idx % 8) < 4 else 9 + (idx // 8)
     return f"{prefix}{base_value:02d}", f"{prefix}{(base_value - 1):02d}"
-
 
 # =========================================================
 # STEP 1: PARSING AND EXTRACTION
@@ -148,7 +147,7 @@ def align_dataframes(df1: pd.DataFrame, df2: pd.DataFrame):
     return df1_aligned[all_columns], df2_aligned[all_columns]
 
 def identify_changed_combinations(old_p: str, old_df: pd.DataFrame, new_p: str, new_df: pd.DataFrame, quarter_str: str):
-    if not old_p and not new_p: return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    if not old_p and not new_p: return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), []
 
     # --- 1. PRE-EXISTING WINDOW EXTRACTION ---
     window_cols = {"W4", "R7", "R0", "R8", "V7", "V8", "V0", "V9"}
@@ -174,7 +173,6 @@ def identify_changed_combinations(old_p: str, old_df: pd.DataFrame, new_p: str, 
     columns = old_changed_comb.columns
     to_drop_old, to_drop_new = set(), set()
 
-    # Only run delta comparison if it's the exact same product
     if old_p and new_p and str(old_p).strip() == str(new_p).strip():
         for i, row1 in old_changed_comb.iterrows():
             for j, row2 in new_changed_comb.iterrows():
@@ -195,13 +193,29 @@ def identify_changed_combinations(old_p: str, old_df: pd.DataFrame, new_p: str, 
     # --- 3. EVALUATE PRE-EXISTING WINDOWS ---
     final_old_rows = []
     final_unchanged_rows = []
+    case_5_records = []
 
     given_q_idx = get_index_from_quarter_str(quarter_str)
     curr_open_idx = get_current_quarter_index()
 
-    for i, row in old_df.iterrows():
+    def reattach_windows(r_series, wins):
+        r_dict = r_series.to_dict()
+        for w in wins:
+            col_name, cell_val = w[:2], w[2:]
+            if col_name not in r_dict: r_dict[col_name] = []
+            current = r_dict[col_name]
+            if not isinstance(current, list):
+                current = [current] if pd.notna(current) and current != "" else []
+            if cell_val not in current:
+                current.append(cell_val)
+            r_dict[col_name] = current
+        return r_dict
+
+    for i, row in clean_old_df.iterrows():
         windows = old_windows[i]
         case = "Normal"
+        c_win_str = o_win_str = ""
+        c_win_idx = -999
 
         if len(windows) == 1:
             window_str = windows[0]
@@ -216,9 +230,7 @@ def identify_changed_combinations(old_p: str, old_df: pd.DataFrame, new_p: str, 
             if not is_closing:
                 if comb_idx > given_open_idx:
                     case = "Case 3"
-                elif (given_close_idx < comb_idx < given_open_idx) and \
-                     (comb_idx >= curr_open_idx - 1) and \
-                     (given_open_idx - comb_idx <= 4):
+                elif (given_close_idx < comb_idx < given_open_idx) and (comb_idx >= curr_open_idx - 1) and (given_open_idx - comb_idx <= 4):
                     case = "Case 1"
             else:
                 if comb_idx < given_close_idx:
@@ -227,28 +239,106 @@ def identify_changed_combinations(old_p: str, old_df: pd.DataFrame, new_p: str, 
                     elif comb_idx < curr_close_idx:
                         case = "Case 2b"
 
+        elif len(windows) == 2:
+            # --- CASE 5: TWO WINDOWS ---
+            idx1 = get_index_from_window_element(windows[0])
+            idx2 = get_index_from_window_element(windows[1])
+            
+            # The one that comes first in infinite series is closing
+            if idx1 < idx2:
+                c_win_str, o_win_str = windows[0], windows[1]
+                c_win_idx = idx1
+            else:
+                c_win_str, o_win_str = windows[1], windows[0]
+                c_win_idx = idx2
+
+            # Determine closing window's Quarter representation (+2 years -> +8 index)
+            c_win_quarter_idx = c_win_idx + 8
+            if c_win_quarter_idx < given_q_idx:
+                case = "Case 5"
+
         is_changed = (i not in to_drop_old)
 
         if case == "Case 3":
             raise ValueError("SN confirmation needed : Old reference ECDV has an opening window which is after the given quarter in the suivi line.")
         elif case == "Case 2b":
-            continue # Completely discard
+            continue 
         elif case == "Case 2a":
-            final_unchanged_rows.append(row) # Forcibly unchanged
+            final_unchanged_rows.append(reattach_windows(row, windows))
+        elif case == "Case 5":
+            if not is_changed:
+                # Not undergoing change: Directly merge both windows, send to unchanged
+                final_unchanged_rows.append(reattach_windows(row, windows))
+            else:
+                # Undergoing change: Hold back for User Y/N confirmation
+                case_5_records.append({
+                    'row_clean': row.to_dict(),
+                    'c_win_str': c_win_str,
+                    'o_win_str': o_win_str,
+                    'c_win_idx': c_win_idx,
+                    'display_dict': reattach_windows(row, windows)
+                })
         elif case == "Case 1" or case == "Normal":
             if is_changed:
-                final_old_rows.append(row)
+                final_old_rows.append(reattach_windows(row, windows))
             else:
-                final_unchanged_rows.append(row)
+                final_unchanged_rows.append(reattach_windows(row, windows))
 
-    # Reconstruct DataFrames safely
     final_old = pd.DataFrame(final_old_rows).reset_index(drop=True) if final_old_rows else pd.DataFrame(columns=old_df.columns)
     final_unchanged = pd.DataFrame(final_unchanged_rows).reset_index(drop=True) if final_unchanged_rows else pd.DataFrame(columns=old_df.columns)
     
     final_new = new_changed_comb.drop(index=list(to_drop_new)).reset_index(drop=True)
     if final_new.empty: final_new = pd.DataFrame(columns=new_df.columns)
 
-    return final_old, final_new, final_unchanged
+    return final_old, final_new, final_unchanged, case_5_records
+
+# =========================================================
+# PROCESS CASE 5 USER DECISIONS
+# =========================================================
+def process_case_5_decisions(case_5_records: list, yn_answers: list):
+    """
+    Processes the Y/N answers from the user for Case 5 rows.
+    Returns: (df_to_add_to_final_old, df_to_add_to_final_unchanged)
+    """
+    new_final_old = []
+    new_final_unchanged = []
+    curr_close_idx = get_current_quarter_index() - 8
+
+    def reattach_windows_dict(r_dict, wins):
+        res = r_dict.copy()
+        for w in wins:
+            col_name, cell_val = w[:2], w[2:]
+            if col_name not in res: res[col_name] = []
+            current = res[col_name]
+            if not isinstance(current, list):
+                current = [current] if pd.notna(current) and current != "" else []
+            if cell_val not in current:
+                current.append(cell_val)
+            res[col_name] = current
+        return res
+
+    for i, record in enumerate(case_5_records):
+        ans = str(yn_answers[i]).strip().upper() if i < len(yn_answers) and yn_answers[i] else ""
+        row_clean = record['row_clean']
+        c_win_str = record['c_win_str']
+        o_win_str = record['o_win_str']
+        c_win_idx = record['c_win_idx']
+
+        if ans == 'N':
+            # Merge with ONLY opening window, pass to final_old
+            new_final_old.append(reattach_windows_dict(row_clean, [o_win_str]))
+        elif ans == 'Y':
+            # Check against current closing window
+            if c_win_idx >= curr_close_idx:
+                new_final_unchanged.append(reattach_windows_dict(row_clean, [c_win_str, o_win_str]))
+            else:
+                # Discard completely
+                pass
+
+    df_old_add = pd.DataFrame(new_final_old)
+    df_unchanged_add = pd.DataFrame(new_final_unchanged)
+    return df_old_add, df_unchanged_add
+
 
 # =========================================================
 # STEP 3: WINDOW INJECTION & MERGING
@@ -501,7 +591,7 @@ def format_dataframe_for_display(df):
         display_df[col] = display_df[col].apply(format_cell_for_display)
     return display_df
 
-def format_for_data_editor(df: pd.DataFrame) -> pd.DataFrame:
+def format_for_data_editor(df: pd.DataFrame, is_case_5=False) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
     rows = []
@@ -514,6 +604,11 @@ def format_for_data_editor(df: pd.DataFrame) -> pd.DataFrame:
         rows.append(row_elements)
     display_df = pd.DataFrame(rows)
     display_df.columns = display_df.columns.astype(str)
-    display_df["below or above"] = None
-    display_df["versions start date"] = None
+    
+    if is_case_5:
+        display_df["Y/N"] = None
+    else:
+        display_df["below or above"] = None
+        display_df["versions start date"] = None
+        
     return display_df
