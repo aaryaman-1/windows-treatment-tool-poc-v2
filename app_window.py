@@ -6,6 +6,7 @@ from backend_window import (
     process_index_simultaneously,
     identify_changed_combinations,
     process_case_5_decisions,
+    process_case_7_decisions,
     apply_window_elements,
     filter_old_combinations,
     execute_step_3_merging,
@@ -14,12 +15,10 @@ from backend_window import (
 
 def format_custom_tsv(df: pd.DataFrame) -> str:
     tsv_lines = []
-# REPLACE IT WITH THIS UPDATED BLOCK:
     for _, row in df.iterrows():
         row_elements = []
         for col in df.columns:
             raw_val = row[col]
-            # Cleanly unpack lists for manufacturing document documentation
             if isinstance(raw_val, list):
                 vals = [str(v).replace("!", "") for v in raw_val if str(v).strip() not in ["", "[]"]]
                 val = ",".join(vals) if vals else ""
@@ -84,34 +83,34 @@ if st.button("combinations undergoing change"):
         opening_win, closing_win = get_window_elements(quarter_input)
         
         results_cache = []
-        has_case_5 = False
+        requires_stage_05 = False
         
         for idx in range(max_len):
             old_df, new_df, CM, Family = process_index_simultaneously(
                 idx, old_p_list, old_e_list, new_p_list, new_e_list
             )
             
-            final_old, final_new, final_unchanged, case_5_records = identify_changed_combinations(
+            final_old, final_new, final_unchanged, case_5_records, case_7_records = identify_changed_combinations(
                 old_p_list[idx], old_df, new_p_list[idx], new_df, quarter_input
             )
             
-            if case_5_records:
-                has_case_5 = True
+            if case_5_records or case_7_records:
+                requires_stage_05 = True
                 
             results_cache.append({
                 "idx": idx, "CM": CM, "Family": Family,
                 "old_p": old_p_list[idx], "new_p": new_p_list[idx],
                 "final_old": final_old, "final_new": final_new,
                 "final_unchanged": final_unchanged,
-                "case_5_records": case_5_records
+                "case_5_records": case_5_records,
+                "case_7_records": case_7_records
             })
             
         st.session_state.delta_results = results_cache
         st.session_state.opening_win = opening_win
         st.session_state.closing_win = closing_win
         
-        # Route to Stage 0.5 if Case 5 exists, otherwise jump straight to Stage 1.0
-        st.session_state.stage = 0.5 if has_case_5 else 1.0
+        st.session_state.stage = 0.5 if requires_stage_05 else 1.0
         st.rerun()
 
     except Exception as e:
@@ -119,24 +118,22 @@ if st.button("combinations undergoing change"):
 
 
 # ==========================================
-# STAGE 0.5: CASE 5 HUMAN-IN-THE-LOOP
+# STAGE 0.5: CASE 5 & 7 HUMAN-IN-THE-LOOP
 # ==========================================
 if st.session_state.stage == 0.5:
     st.warning("⚠️ SN confirmation needed: Do you still want the pre-existing closing windows to remain in these combinations?")
     
     edited_case5_dataframes = {}
+    edited_case7_dataframes = {}
     
     for res in st.session_state.delta_results:
         idx = res["idx"]
-        records = res["case_5_records"]
+        c5_records = res["case_5_records"]
+        c7_records = res["case_7_records"]
         
-        if records:
+        if c5_records:
             st.write(f"### Index {idx} | Case 5 Combinations")
-            
-            # Construct a dataframe dynamically from the stored display dictionaries
-            df_case5_display = pd.DataFrame([rec["display_dict"] for rec in records])
-            
-            # Format using the new flag to explicitly add ONLY the "Y/N" column
+            df_case5_display = pd.DataFrame([rec["display_dict"] for rec in c5_records])
             editor_df_c5 = format_for_data_editor(df_case5_display, is_case_5=True)
             disabled_cols_c5 = [c for c in editor_df_c5.columns if c != "Y/N"]
             
@@ -147,35 +144,55 @@ if st.session_state.stage == 0.5:
                 use_container_width=True,
                 hide_index=True
             )
+            
+        if c7_records:
+            st.write(f"### Index {idx} | Case 7 Combinations")
+            df_case7_display = pd.DataFrame([rec["display_dict"] for rec in c7_records])
+            editor_df_c7 = format_for_data_editor(df_case7_display, is_case_5=True)
+            disabled_cols_c7 = [c for c in editor_df_c7.columns if c != "Y/N"]
+            
+            edited_case7_dataframes[f"case7_{idx}"] = st.data_editor(
+                editor_df_c7, 
+                key=f"editor_case7_{idx}", 
+                disabled=disabled_cols_c7,
+                use_container_width=True,
+                hide_index=True
+            )
+            
+        if c5_records or c7_records:
             st.markdown("---")
             
     if st.button("Continue to combinations undergoing change"):
         for res in st.session_state.delta_results:
             idx = res["idx"]
-            records = res["case_5_records"]
             
-            if records:
-                e_df = edited_case5_dataframes.get(f"case5_{idx}")
-                yn_answers = e_df["Y/N"].tolist() if e_df is not None else [""] * len(records)
+            # --- Handle Case 5 ---
+            c5_records = res["case_5_records"]
+            if c5_records:
+                e_df_5 = edited_case5_dataframes.get(f"case5_{idx}")
+                yn_answers_5 = e_df_5["Y/N"].tolist() if e_df_5 is not None else [""] * len(c5_records)
                 
-                # Backend processes the Y/N decisions
-                df_old_add, df_unchanged_add = process_case_5_decisions(records, yn_answers)
+                df_old_add_5, df_unchanged_add_5 = process_case_5_decisions(c5_records, yn_answers_5)
                 
-                # Safely merge back into the main workflow
-                if not df_old_add.empty:
-                    # Align columns and concatenate
-                    all_cols_old = sorted(set(res["final_old"].columns).union(set(df_old_add.columns)))
-                    res["final_old"] = pd.concat([
-                        res["final_old"].reindex(columns=all_cols_old), 
-                        df_old_add.reindex(columns=all_cols_old)
-                    ], ignore_index=True)
-                    
-                if not df_unchanged_add.empty:
-                    all_cols_un = sorted(set(res["final_unchanged"].columns).union(set(df_unchanged_add.columns)))
-                    res["final_unchanged"] = pd.concat([
-                        res["final_unchanged"].reindex(columns=all_cols_un), 
-                        df_unchanged_add.reindex(columns=all_cols_un)
-                    ], ignore_index=True)
+                if not df_old_add_5.empty:
+                    all_cols_old = sorted(set(res["final_old"].columns).union(set(df_old_add_5.columns)))
+                    res["final_old"] = pd.concat([res["final_old"].reindex(columns=all_cols_old), df_old_add_5.reindex(columns=all_cols_old)], ignore_index=True)
+                if not df_unchanged_add_5.empty:
+                    all_cols_un = sorted(set(res["final_unchanged"].columns).union(set(df_unchanged_add_5.columns)))
+                    res["final_unchanged"] = pd.concat([res["final_unchanged"].reindex(columns=all_cols_un), df_unchanged_add_5.reindex(columns=all_cols_un)], ignore_index=True)
+
+            # --- Handle Case 7 ---
+            c7_records = res["case_7_records"]
+            if c7_records:
+                e_df_7 = edited_case7_dataframes.get(f"case7_{idx}")
+                yn_answers_7 = e_df_7["Y/N"].tolist() if e_df_7 is not None else [""] * len(c7_records)
+                
+                df_old_add_7, updated_final_new = process_case_7_decisions(c7_records, yn_answers_7, res["final_new"])
+                res["final_new"] = updated_final_new
+                
+                if not df_old_add_7.empty:
+                    all_cols_old = sorted(set(res["final_old"].columns).union(set(df_old_add_7.columns)))
+                    res["final_old"] = pd.concat([res["final_old"].reindex(columns=all_cols_old), df_old_add_7.reindex(columns=all_cols_old)], ignore_index=True)
                     
         st.session_state.stage = 1.0
         st.rerun()
