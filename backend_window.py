@@ -549,14 +549,16 @@ def execute_step_3_merging(old_p: str, df_old: pd.DataFrame, new_p: str, df_new:
     results = {"old_ecdv_output": None, "new_ecdv_output": None, "case_executed": None}
 
     if old_exists and not new_exists:
-        results["old_ecdv_output"] = generate_ecdv(df_old, CM, Family)
+        df_old_merged = pd.concat([final_unchanged, df_old], ignore_index=True)
+        results["old_ecdv_output"] = generate_ecdv(df_old_merged, CM, Family)
         results["case_executed"] = "Case 4 (Cancellation)"
     elif new_exists and not old_exists:
         results["new_ecdv_output"] = generate_ecdv(df_new, CM, Family)
         results["case_executed"] = "Case 3 (Creation)"
     elif old_exists and new_exists:
         if str(old_p).strip() != str(new_p).strip():
-            results["old_ecdv_output"] = generate_ecdv(df_old, CM, Family)
+            df_old_merged = pd.concat([final_unchanged, df_old], ignore_index=True)
+            results["old_ecdv_output"] = generate_ecdv(df_old_merged, CM, Family)
             results["new_ecdv_output"] = generate_ecdv(df_new, CM, Family)
             results["case_executed"] = "Case 1 (Cancel and Replace)"
         else:
