@@ -340,10 +340,14 @@ def identify_changed_combinations(old_p: str, old_df: pd.DataFrame, new_p: str, 
 # PROCESS CASE 5 & CASE 7 USER DECISIONS
 # =========================================================
 def inject_windows_to_dict(r_dict, wins):
+    """
+    Safely injects window elements into a row dictionary as list values.
+    """
     res = r_dict.copy()
     for w in wins:
         col_name, cell_val = w[:2], w[2:]
-        if col_name not in res: res[col_name] = []
+        if col_name not in res: 
+            res[col_name] = []
         current = res[col_name]
         if not isinstance(current, list):
             current = [current] if pd.notna(current) and current != "" else []
@@ -371,23 +375,6 @@ def process_case_5_decisions(case_5_records: list, yn_answers: list):
     df_old_add = pd.DataFrame(new_final_old)
     df_unchanged_add = pd.DataFrame(new_final_unchanged)
     return df_old_add, df_unchanged_add
-
-def inject_windows_to_dict(r_dict, wins):
-    """
-    Safely injects window elements into a row dictionary as list values.
-    """
-    res = r_dict.copy()
-    for w in wins:
-        col_name, cell_val = w[:2], w[2:]
-        if col_name not in res: 
-            res[col_name] = []
-        current = res[col_name]
-        if not isinstance(current, list):
-            current = [current] if pd.notna(current) and current != "" else []
-        if cell_val not in current:
-            current.append(cell_val)
-        res[col_name] = current
-    return res
 
 def process_case_7_decisions(case_7_records: list, yn_answers: list, final_new_df: pd.DataFrame):
     """
