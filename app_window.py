@@ -14,12 +14,23 @@ from backend_window import (
 
 def format_custom_tsv(df: pd.DataFrame) -> str:
     tsv_lines = []
+# REPLACE IT WITH THIS UPDATED BLOCK:
     for _, row in df.iterrows():
         row_elements = []
         for col in df.columns:
-            val = str(row[col]).strip()
+            raw_val = row[col]
+            # Cleanly unpack lists for manufacturing document documentation
+            if isinstance(raw_val, list):
+                vals = [str(v).replace("!", "") for v in raw_val if str(v).strip() not in ["", "[]"]]
+                val = ",".join(vals) if vals else ""
+            else:
+                val = str(raw_val).strip()
+                if val.startswith("!"):
+                    val = val[1:]
+            
             if val not in ["[]", "['']", "", "nan", "None"]:
                 row_elements.append(f"{col}{val}")
+
         if row_elements:
             tsv_lines.append("\t".join(row_elements))
     return "\n".join(tsv_lines)
