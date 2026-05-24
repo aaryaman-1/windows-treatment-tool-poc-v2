@@ -597,13 +597,25 @@ def format_for_data_editor(df: pd.DataFrame, is_case_5=False) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
     rows = []
+    
+# REPLACE IT WITH THIS UPDATED BLOCK:
     for _, row in df.iterrows():
         row_elements = []
         for col in df.columns:
-            val = str(row[col]).strip()
+            raw_val = row[col]
+            # Cleanly unpack lists (like ['13']) and strip any window direction flags ('!')
+            if isinstance(raw_val, list):
+                vals = [str(v).replace("!", "") for v in raw_val if str(v).strip() not in ["", "[]"]]
+                val = ",".join(vals) if vals else ""
+            else:
+                val = str(raw_val).strip()
+                if val.startswith("!"):
+                    val = val[1:]
+            
             if val not in ["[]", "['']", "", "nan", "None", "NaN"]:
                 row_elements.append(f"{col}{val}")
         rows.append(row_elements)
+    
     display_df = pd.DataFrame(rows)
     display_df.columns = display_df.columns.astype(str)
     
