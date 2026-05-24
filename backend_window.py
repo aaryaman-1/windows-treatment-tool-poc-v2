@@ -377,11 +377,6 @@ def process_case_5_decisions(case_5_records: list, yn_answers: list):
     return df_old_add, df_unchanged_add
 
 def process_case_7_decisions(case_7_records: list, yn_answers: list, final_new_df: pd.DataFrame):
-    """
-    Processes the Y/N answers from the user for Case 7 rows.
-    If 'N': Merges only the opening window to final_old.
-    If 'Y': Merges opening window to final_old AND closing window to the identical new_df row.
-    """
     new_final_old = []
     
     for i, record in enumerate(case_7_records):
@@ -391,13 +386,10 @@ def process_case_7_decisions(case_7_records: list, yn_answers: list, final_new_d
         matching_j = record['matching_j']
         
         if ans == 'N':
-            # Case 7(c1) User entry 'N': Merge only with opening window element
             new_final_old.append(inject_windows_to_dict(row_clean, [o_win_str]))
         elif ans == 'Y':
-            # Case 7(c1) User entry 'Y': Merge opening window element to old row
             new_final_old.append(inject_windows_to_dict(row_clean, [o_win_str]))
             
-            # AND merge the closing window element to its identical row in final_new
             if matching_j < len(final_new_df):
                 row_dict = final_new_df.iloc[matching_j].to_dict()
                 row_dict = inject_windows_to_dict(row_dict, [c_win_str])
@@ -405,7 +397,6 @@ def process_case_7_decisions(case_7_records: list, yn_answers: list, final_new_d
                 
     df_old_add = pd.DataFrame(new_final_old)
     return df_old_add, final_new_df
-
 
 # =========================================================
 # STEP 3: WINDOW INJECTION & MERGING
