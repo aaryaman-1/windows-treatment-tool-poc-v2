@@ -195,6 +195,10 @@ def identify_changed_combinations(old_p: str, old_df: pd.DataFrame, new_p: str, 
     final_unchanged_rows = []
     case_5_records = []
     case_7_records = []
+    
+    # Track which rows in the new dataframe have already been matched to an old row
+    # This prevents multiple old configurations from matching the same new configuration.
+    matched_new_j = set()
 
     given_q_idx = get_index_from_quarter_str(quarter_str)
     curr_open_idx = get_current_quarter_index()
@@ -220,23 +224,25 @@ def identify_changed_combinations(old_p: str, old_df: pd.DataFrame, new_p: str, 
 
         if len(windows) == 1:
             window_str = windows[0]
-            comb_idx = get_index_from_window_element(window_str)
+            is_closing = window_str.startswith("!")
+            clean_win = window_str.replace("!", "")
+            comb_idx = get_index_from_window_element(clean_win)
 
             given_open_idx = given_q_idx
             given_close_idx = given_q_idx - 8
             curr_close_idx = curr_open_idx - 8
 
-            if comb_idx > given_open_idx:
-                case = "Case 3"
-                
-            elif (given_close_idx < comb_idx < given_open_idx) and (comb_idx >= curr_open_idx - 1) and (given_open_idx - comb_idx <= 4):
-                case = "Case 1"
-                
-            if comb_idx < given_close_idx:
-                if comb_idx >= curr_close_idx:
-                    case = "Case 2a"
-                elif comb_idx < curr_close_idx:
-                    case = "Case 2b"
+            if not is_closing:
+                if comb_idx > given_open_idx:
+                    case = "Case 3"
+                elif (given_close_idx < comb_idx < given_open_idx) and (comb_idx >= curr_open_idx - 1) and (given_open_idx - comb_idx <= 4):
+                    case = "Case 1"
+            else:
+                if comb_idx < given_close_idx:
+                    if comb_idx >= curr_close_idx:
+                        case = "Case 2a"
+                    elif comb_idx < curr_close_idx:
+                        case = "Case 2b"
 
         elif len(windows) == 2:
             idx1 = get_index_from_window_element(windows[0])
@@ -295,6 +301,9 @@ def identify_changed_combinations(old_p: str, old_df: pd.DataFrame, new_p: str, 
                     matching_j = -1
                     
                     for j, row2 in new_changed_comb.iterrows():
+                        # Bulletproof check: Do not match a new row that was already matched
+                        if j in matched_new_j:
+                            continue
                         is_identical = True
                         for col in columns:
                             v1, v2 = row[col], row2[col]
@@ -306,6 +315,7 @@ def identify_changed_combinations(old_p: str, old_df: pd.DataFrame, new_p: str, 
                         if is_identical:
                             identical_in_new = True
                             matching_j = j
+                            matched_new_j.add(j)
                             break
                     
                     if identical_in_new:
@@ -389,9 +399,20 @@ def process_case_7_decisions(case_7_records: list, yn_answers: list, final_new_d
             new_final_old.append(inject_windows_to_dict(row_clean, [o_win_str]))
             
             if matching_j < len(final_new_df):
-                row_dict = final_new_df.iloc[matching_j].to_dict()
-                row_dict = inject_windows_to_dict(row_dict, [c_win_str])
-                final_new_df.loc[matching_j] = pd.Series(row_dict)
+                col_name, cell_val = c_win_str[:2], c_win_str[2:]
+                
+                # Bulletproof Injection: Bypass pd.Series list mangling by using df.at
+                if col_name not in final_new_df.columns:
+                    final_new_df[col_name] = [[] for _ in range(len(final_new_df))]
+                    
+                current = final_new_df.at[matching_j, col_name]
+                if not isinstance(current, list):
+                    current = [current] if pd.notna(current) and current != "" else []
+                    
+                if cell_val not in current:
+                    new_list = current.copy()
+                    new_list.append(cell_val)
+                    final_new_df.at[matching_j, col_name] = new_list
                 
     df_old_add = pd.DataFrame(new_final_old)
     return df_old_add, final_new_df
