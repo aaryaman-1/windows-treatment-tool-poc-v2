@@ -224,25 +224,22 @@ def identify_changed_combinations(old_p: str, old_df: pd.DataFrame, new_p: str, 
 
         if len(windows) == 1:
             window_str = windows[0]
-            is_closing = window_str.startswith("!")
-            clean_win = window_str.replace("!", "")
-            comb_idx = get_index_from_window_element(clean_win)
+            comb_idx = get_index_from_window_element(window_str)
 
             given_open_idx = given_q_idx
             given_close_idx = given_q_idx - 8
             curr_close_idx = curr_open_idx - 8
 
-            if not is_closing:
-                if comb_idx > given_open_idx:
-                    case = "Case 3"
-                elif (given_close_idx < comb_idx < given_open_idx) and (comb_idx >= curr_open_idx - 1) and (given_open_idx - comb_idx <= 4):
-                    case = "Case 1"
-            else:
-                if comb_idx < given_close_idx:
-                    if comb_idx >= curr_close_idx:
-                        case = "Case 2a"
-                    elif comb_idx < curr_close_idx:
-                        case = "Case 2b"
+            if comb_idx > given_open_idx:
+                case = "Case 3"
+            elif (given_close_idx < comb_idx < given_open_idx) and (comb_idx >= curr_open_idx - 1) and (given_open_idx - comb_idx <= 4):
+                case = "Case 1"
+            
+            if comb_idx < given_close_idx:
+                if comb_idx >= curr_close_idx:
+                    case = "Case 2a"
+                elif comb_idx < curr_close_idx:
+                    case = "Case 2b"
 
         elif len(windows) == 2:
             idx1 = get_index_from_window_element(windows[0])
